@@ -13,7 +13,8 @@
   "license": "ISC",
   "dependencies": {
     "arlocal": "^1.1.66",
-    "axios": "^1.6.8"
+    "axios": "^1.6.8",
+    "dotenv": "^16.4.5"
   },
   "devDependencies": {
     "typescript": "^5.4.5"

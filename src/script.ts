@@ -1,8 +1,11 @@
 import axios from "axios";
+import * as dotenv from 'dotenv';
+
+dotenv.config();
 
 export async function topUpWalletBalance() {
-    const url = 'http://localhost:1984/mint/s6sgF_F8INO05M3BdJtH15OtQxGc880z7Jh3jgqMhno/100000000';
-
+    const url = `${process.env.APP_URL}/mint/${process.env.WALLET_ADDRESS}/100000000`;
+    console.log(url)
     try {
         const response = await axios.get(url);
         console.log('Data received:', response.data);
