@@ -1,0 +1,80 @@
+name: Build & Push Staging Release
+
+on:
+  push:
+    branches:
+      - main
+      - cicd
+
+env:
+  DO_CONTAINER_REGISTRY: "daosign-container-registry"
+
+jobs:
+  build:
+    name: Run docker build
+    runs-on: ubuntu-latest
+    outputs:
+      image_tag: ${{steps.vars.outputs.tag}}
+    steps:
+      - uses: actions/checkout@v3
+      - name: Get the version
+        id: vars
+        run: echo "tag=$(echo ${GITHUB_SHA:0:7})" >> $GITHUB_OUTPUT
+      - name: Build the Docker image
+        run: docker build -t stage-arweave:${{steps.vars.outputs.tag}} .
+      - name: Install doctl
+        uses: digitalocean/action-doctl@v2
+        with:
+          token: ${{ secrets.DO_ACCESS_TOKEN }}
+      - name: Log in to DigitalOcean Container Registry
+        run: doctl registry login --expiry-seconds 600
+      - name: Tag image
+        run: |
+          docker tag stage-arweave:${{ steps.vars.outputs.tag }} \
+          registry.digitalocean.com/${{ env.DO_CONTAINER_REGISTRY }}/stage-arweave:${{ steps.vars.outputs.tag }}
+      - name: Push to DigitalOcean Container Registry
+        run: |
+          docker push registry.digitalocean.com/${{ env.DO_CONTAINER_REGISTRY }}/stage-arweave:${{ steps.vars.outputs.tag }}
+  deploy:
+    name: Run helm upgrade
+    runs-on: ubuntu-latest
+    needs: [build]
+    env:
+      # Ingress
+      HOST: 'arweave.testnet.daosign.org'
+      # Secrets
+      APP_URL: 'http://localhost:3000'
+      APP_PORT: '3000'
+    steps:
+      - uses: actions/checkout@v3
+      - name: Create & View .env.yaml file
+        id: create-env
+        run: |
+          cat << EOF > .env.yaml
+          {
+            "ingress": {
+              "host": "${{ env.HOST }}"
+            },
+            "secrets": {
+              "appUrl": "${{ env.APP_URL }}",
+              "appPort": "${{ env.APP_PORT }}",
+              "walletAddress": "${{ secrets.WALLET_ADDRESS }}"
+            }
+          }
+          EOF
+      - name: Install doctl
+        uses: digitalocean/action-doctl@v2
+        with:
+          token: ${{ secrets.DO_ACCESS_TOKEN }}
+      - name: Save DigitalOcean kubeconfig
+        run: doctl kubernetes cluster kubeconfig save daosign-kubernetes-cluster-prod
+      - name: Helm deploy the latest image
+        env:
+          NAMESPACE: 'stage'
+          HELM_VERSION: 1.0.0
+        run: |
+          doctl registry login --expiry-seconds 600 && \
+          kubectl get pods -n ${{ env.NAMESPACE }} && helm ls -n ${{ env.NAMESPACE }} && \
+          helm upgrade helm-arweave -i -n ${{ env.NAMESPACE }} --atomic -f .env.yaml oci://registry.digitalocean.com/${{ env.DO_CONTAINER_REGISTRY }}/helm-arweave --version $HELM_VERSION \
+          --set=arweave.image.repository=registry.digitalocean.com/${{ env.DO_CONTAINER_REGISTRY }}/stage-arweave,arweave.image.tag=${{needs.build.outputs.image_tag}} && \
+          helm ls -n ${{ env.NAMESPACE }} && kubectl get pods -n ${{ env.NAMESPACE }}
